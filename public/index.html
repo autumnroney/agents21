@@ -25,11 +25,12 @@
       </div>
 
       <div class="controls">
-        <fieldset class="segmented" aria-label="Platform">
+        <fieldset class="segmented">
           <legend class="sr-only">Platform</legend>
           <input type="radio" name="platform" id="p-tiktok" value="tiktok" checked><label for="p-tiktok">TikTok</label>
           <input type="radio" name="platform" id="p-shorts" value="shorts"><label for="p-shorts">YT Shorts</label>
           <input type="radio" name="platform" id="p-youtube" value="youtube"><label for="p-youtube">YouTube</label>
+          <input type="radio" name="platform" id="p-all" value="all" aria-describedby="platform-hint"><label for="p-all">All</label>
         </fieldset>
 
         <label class="field">Posted
@@ -42,15 +43,18 @@
           </select>
         </label>
 
-        <label class="field">Sort by
-          <select id="sort">
-            <option value="score" selected>Viral score</option>
-            <option value="velocity">Views per hour</option>
-            <option value="views">Total views</option>
-            <option value="engagement">Engagement rate</option>
-            <option value="newest">Newest</option>
-          </select>
-        </label>
+        <div class="field-help">
+          <label class="field">Sort by
+            <select id="sort">
+              <option value="score" selected>Viral score</option>
+              <option value="velocity">Views per hour</option>
+              <option value="views">Total views</option>
+              <option value="engagement">Engagement rate</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+          <button type="button" id="score-help" class="icon-btn" aria-expanded="false" aria-controls="score-help-panel" aria-label="How the viral score works">i</button>
+        </div>
 
         <label class="field">Min views
           <select id="minViews">
@@ -61,21 +65,44 @@
             <option value="10000000">10M+</option>
           </select>
         </label>
+
+        <div class="copy">
+          <button type="button" id="copy" class="secondary" hidden>Copy link</button>
+          <span id="copy-note" class="copy-note" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <p id="platform-hint" class="hint">“All” searches TikTok, YT Shorts and YouTube together and uses 3 credits.</p>
+
+      <div id="score-help-panel" class="help" hidden>
+        <p><strong>How the viral score works (0–100).</strong> Mostly speed: views per hour since posting, on a log scale (up to about 70 points for very fast videos). Plus engagement: likes, comments and shares divided by views, up to 30 points at 20% or more. If a platform doesn’t report likes, the video gets a neutral 10 points. If the post date is unknown, the video is treated as 30 days old.</p>
+        <p>Select a card’s score to see its breakdown.</p>
       </div>
     </form>
 
     <div id="status" class="status" role="status" aria-live="polite"></div>
-    <section id="results" class="grid" aria-label="Results"></section>
-    <div class="more"><button id="more" type="button" hidden>Load more</button></div>
+    <div id="alert" class="alert" role="alert" tabindex="-1" hidden>
+      <p id="alert-title" class="alert-title"></p>
+      <p id="alert-msg" class="alert-msg"></p>
+      <button id="retry" type="button" hidden>Try again</button>
+    </div>
+    <section id="results" class="grid" aria-label="Results" tabindex="-1"></section>
+    <div class="more">
+      <button id="more" type="button" hidden>Load more</button>
+      <p id="end" class="end" tabindex="-1" hidden>End of results</p>
+    </div>
 
     <template id="card">
       <article class="card">
-        <a class="thumb" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">
-          <img loading="lazy" alt="">
-          <span class="platform"></span>
-          <span class="duration"></span>
-          <span class="score" title="Viral score (0–100)"></span>
-        </a>
+        <div class="thumb">
+          <a class="thumb-link" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">
+            <img loading="lazy" alt="">
+            <span class="platform"></span>
+            <span class="duration"></span>
+          </a>
+          <button type="button" class="score" aria-expanded="false"><span aria-hidden="true">🔥</span> <span class="score-num"></span></button>
+        </div>
+        <div class="breakdown" hidden></div>
         <div class="body">
           <a class="title" target="_blank" rel="noopener noreferrer"></a>
           <div class="author"></div>
@@ -92,8 +119,9 @@
 
   <footer class="wrap foot">
     Data via <a href="https://scrapecreators.com" target="_blank" rel="noopener noreferrer">ScrapeCreators</a>. Not affiliated with TikTok or YouTube.
+    · <a href="privacy.html">Privacy Notice</a>
   </footer>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

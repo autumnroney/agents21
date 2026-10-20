@@ -1,73 +1,65 @@
-"use strict";
+import {
+  ago, compact, duration, enrich, errorCode, normalizeQuery, percent, queryLengthBucket, scoreParts,
+} from "./score.js";
 
 const $ = (sel) => document.querySelector(sel);
 const form = $("#search");
+const qInput = $("#q");
+const rangeSel = $("#range");
+const sortSel = $("#sort");
+const minViewsSel = $("#minViews");
 const results = $("#results");
 const status = $("#status");
 const moreBtn = $("#more");
+const endMsg = $("#end");
 const goBtn = $("#go");
+const copyBtn = $("#copy");
+const copyNote = $("#copy-note");
+const helpBtn = $("#score-help");
+const helpPanel = $("#score-help-panel");
+const alertBox = $("#alert");
+const retryBtn = $("#retry");
 const cardTpl = $("#card");
 
 const PLATFORM_LABEL = { tiktok: "TikTok", youtube: "YouTube", "youtube-shorts": "Shorts" };
 
-let state = { query: null, videos: [], cursor: null, loading: false };
+let state = newState(null);
+let inflight = null; // AbortController for the request in flight
+let lastAction = { append: false }; // what Retry repeats
+let blocked = false; // daily limit / kill switch: Search stays off
+let cardNodes = new Map(); // video id -> card element, so re-sorting keeps nodes (and focus)
+let cardSeq = 0;
+let rerunTimer;
+let copyTimer;
+let sharedPending = false; // a shared link filled the form but hasn't been searched yet
 
-// ---------- metrics ----------
-
-function hoursSince(iso) {
-  if (!iso) return null;
-  const h = (Date.now() - new Date(iso).getTime()) / 36e5;
-  return Number.isFinite(h) ? Math.max(h, 1) : null;
+function newState(query) {
+  return { query, videos: [], cursor: null, loading: false, page: 0 };
 }
 
-function engagementRate(v) {
-  if (!v.views || v.likes == null) return null;
-  return ((v.likes || 0) + (v.comments || 0) + (v.shares || 0)) / v.views;
+// ---------- analytics (no cookies; nothing sent with Do Not Track / GPC) ----------
+
+const trackingOff = navigator.doNotTrack === "1" || navigator.globalPrivacyControl === true;
+let sid = null;
+
+function sessionId() {
+  if (sid) return sid;
+  try { sid = sessionStorage.getItem("vf-sid"); } catch { /* storage blocked */ }
+  if (!sid) {
+    sid = [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    try { sessionStorage.setItem("vf-sid", sid); } catch { /* storage blocked */ }
+  }
+  return sid;
 }
 
-// Viral score (0-100): mostly how fast views are coming in (log scale),
-// plus a bonus for strong engagement when the platform reports it.
-function viralScore(v) {
-  const velocity = v.velocity ?? (v.views || 0) / 720; // unknown age: assume ~30 days
-  const speed = 14 * Math.log10(velocity + 1);
-  const eng = v.engagement == null ? 10 : 150 * Math.min(v.engagement, 0.2);
-  return Math.max(0, Math.min(100, Math.round(speed + eng)));
-}
-
-function enrich(v) {
-  const hours = hoursSince(v.publishedAt);
-  v.velocity = hours && v.views != null ? v.views / hours : null;
-  v.engagement = engagementRate(v);
-  v.score = viralScore(v);
-  return v;
-}
-
-// ---------- formatting ----------
-
-function compact(n) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n);
-}
-
-function percent(x) {
-  return x == null ? "—" : `${(x * 100).toFixed(1)}%`;
-}
-
-function ago(iso) {
-  const h = hoursSince(iso);
-  if (h == null) return "—";
-  if (h < 24) return `${Math.round(h)}h ago`;
-  const d = h / 24;
-  if (d < 30) return `${Math.round(d)}d ago`;
-  if (d < 365) return `${Math.round(d / 30)}mo ago`;
-  return `${Math.round(d / 365)}y ago`;
-}
-
-function duration(sec) {
-  if (!sec) return "";
-  const m = Math.floor(sec / 60);
-  const s = String(Math.round(sec % 60)).padStart(2, "0");
-  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${s}` : `${m}:${s}`;
+function track(name, props = {}) {
+  if (trackingOff) return;
+  try {
+    const body = JSON.stringify({ name, sid: sessionId(), props });
+    if (!navigator.sendBeacon?.("/api/event", new Blob([body], { type: "application/json" }))) {
+      fetch("/api/event", { method: "POST", body, headers: { "content-type": "application/json" }, keepalive: true }).catch(() => {});
+    }
+  } catch { /* analytics must never break the page */ }
 }
 
 // ---------- rendering ----------
@@ -80,30 +72,52 @@ const SORTERS = {
   newest: (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0),
 };
 
-function render() {
-  const minViews = Number($("#minViews").value);
+// Only touch the live region when the text really changes, so re-sorting
+// doesn't re-announce the same message.
+function setStatus(text) {
+  if (status.textContent !== text) status.textContent = text;
+}
+
+function summary(list) {
+  const hidden = state.videos.length - list.length;
+  return list.length
+    ? `${list.length} videos for “${state.query.q}”${hidden ? ` (${hidden} hidden by min views)` : ""}`
+    : state.videos.length
+      ? "No videos match the min views filter. Try lowering it."
+      : "No videos found. Try a broader keyword or a longer time range.";
+}
+
+function render(note = "") {
+  const minViews = Number(minViewsSel.value);
   const list = state.videos
     .filter((v) => (v.views ?? 0) >= minViews)
-    .sort(SORTERS[$("#sort").value]);
+    .sort(SORTERS[sortSel.value] || SORTERS.score);
 
-  results.replaceChildren(...list.map(renderCard));
+  // Moving nodes drops focus, so put it back on the same element afterwards.
+  const active = document.activeElement;
+  const hadFocus = active !== results && results.contains(active);
+  results.replaceChildren(...list.map(cardFor));
+  if (hadFocus) (active.isConnected ? active : results).focus();
 
-  if (!state.loading && state.query) {
-    const hidden = state.videos.length - list.length;
-    status.classList.remove("error");
-    status.textContent = list.length
-      ? `${list.length} videos for “${state.query.q}”${hidden ? ` (${hidden} hidden by min views)` : ""}`
-      : state.videos.length
-        ? "No videos match the min views filter. Try lowering it."
-        : "No videos found. Try a broader keyword or a longer time range.";
+  if (!state.loading && state.query) setStatus(note + summary(list));
+  return list;
+}
+
+function cardFor(v) {
+  let node = cardNodes.get(v.id);
+  if (!node) {
+    node = renderCard(v);
+    cardNodes.set(v.id, node);
   }
+  return node;
 }
 
 function renderCard(v) {
   const node = cardTpl.content.firstElementChild.cloneNode(true);
+  node.dataset.id = v.id;
   if (v.platform === "youtube") node.classList.add("wide");
 
-  const thumb = node.querySelector(".thumb");
+  const thumb = node.querySelector(".thumb-link");
   thumb.href = v.url;
   const img = node.querySelector("img");
   if (v.thumbnail) {
@@ -113,7 +127,16 @@ function renderCard(v) {
 
   node.querySelector(".platform").textContent = PLATFORM_LABEL[v.platform] || v.platform;
   node.querySelector(".duration").textContent = duration(v.durationSec);
-  node.querySelector(".score").textContent = `🔥 ${v.score}`;
+
+  // The score is a button: its name reads "Viral score 72 of 100" and it
+  // opens a breakdown of how the number was reached.
+  const scoreBtn = node.querySelector(".score");
+  node.querySelector(".score-num").textContent = v.score;
+  scoreBtn.setAttribute("aria-label", `Viral score ${v.score} of 100`);
+  const breakdown = node.querySelector(".breakdown");
+  breakdown.id = `breakdown-${++cardSeq}`;
+  scoreBtn.setAttribute("aria-controls", breakdown.id);
+  fillBreakdown(breakdown, v);
 
   const title = node.querySelector(".title");
   title.href = v.url;
@@ -129,70 +152,302 @@ function renderCard(v) {
   return node;
 }
 
+function fillBreakdown(el, v) {
+  const p = scoreParts(v);
+  const lines = [
+    `Speed: +${p.speed} pts ${p.ageKnown ? `(${compact(v.velocity)} views/hr)` : "(post date unknown, treated as 30 days old)"}`,
+    `Engagement: +${p.eng} pts ${p.engKnown ? `(${percent(v.engagement)})` : "(not reported, neutral 10)"}`,
+    `Viral score: ${p.score} of 100${p.capped ? " (capped at 100)" : ""}`,
+  ];
+  const ul = document.createElement("ul");
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    ul.append(li);
+  }
+  el.replaceChildren(ul);
+}
+
+function toggle(btn, panel, open = btn.getAttribute("aria-expanded") !== "true") {
+  btn.setAttribute("aria-expanded", String(open));
+  panel.hidden = !open;
+}
+
+// ---------- errors ----------
+
+// [title, message, kind]: "retry" shows Try again; "block" turns Search off.
+const ERROR_COPY = {
+  bad_request: ["Check your search", "Enter a search term and try again.", "none"],
+  rate_limited: ["Too many searches", "You're searching faster than we allow. Wait a minute, then try again.", "retry"],
+  out_of_credits: ["Daily search limit reached", "Searching is paused for now. Please try again later.", "block"],
+  daily_limit: ["Daily search limit reached", "We've used today's search budget. Searching reopens after midnight UTC.", "block"],
+  disabled: ["Search is paused", "Search is turned off for maintenance. Please check back later.", "block"],
+  timeout: ["The search took too long", "The video service was slow to answer. Try again.", "retry"],
+  upstream_error: ["Search is temporarily unavailable", "The video service had a problem. Try again in a moment.", "retry"],
+  config: ["Search is temporarily unavailable", "We're on it. Please try again later.", "none"],
+  network: ["You seem to be offline", "Check your connection, then try again.", "retry"],
+  unknown: ["Something went wrong", "Try again in a moment.", "retry"],
+};
+
+function showAlert(code, serverMessage) {
+  const [title, message, kind] = ERROR_COPY[code] || ERROR_COPY.unknown;
+  alertBox.classList.toggle("notice", kind === "block");
+  alertBox.hidden = false;
+  $("#alert-title").textContent = title;
+  // Only our own validation messages come from the server; never upstream text.
+  $("#alert-msg").textContent = (code === "bad_request" && serverMessage) || message;
+  retryBtn.hidden = kind !== "retry";
+  if (kind === "block") {
+    blocked = true;
+    goBtn.setAttribute("aria-describedby", "alert-msg");
+  }
+  if (code === "bad_request") qInput.focus();
+  else (retryBtn.hidden ? alertBox : retryBtn).focus();
+}
+
+function hideAlert() {
+  const hadFocus = alertBox.contains(document.activeElement);
+  alertBox.hidden = true;
+  if (hadFocus) qInput.focus({ preventScroll: true });
+}
+
 // ---------- data ----------
 
-async function fetchPage(query, cursor) {
+async function fetchPage(query, cursor, signal) {
   const params = new URLSearchParams(query);
   if (cursor != null) params.set("cursor", cursor);
-  const res = await fetch(`/api/search?${params}`);
-  const data = await res.json().catch(() => ({ error: `Unexpected response (HTTP ${res.status})` }));
-  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+  let res;
+  try {
+    res = await fetch(`/api/search?${params}`, { signal });
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw Object.assign(new Error("network"), { code: "network" });
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.error || !Array.isArray(data.items)) {
+    const code = errorCode(res.status, data);
+    throw Object.assign(new Error(code), { code, serverMessage: typeof data?.error === "string" ? data.error : "" });
+  }
   return data;
 }
 
+function syncControls() {
+  goBtn.disabled = blocked || (state.loading && state.page === 0);
+  moreBtn.disabled = state.loading;
+  moreBtn.hidden = blocked || state.cursor == null;
+  endMsg.hidden = !state.done;
+}
+
 async function load({ append }) {
-  if (state.loading) return;
-  state.loading = true;
-  goBtn.disabled = moreBtn.disabled = true;
-  status.classList.remove("error");
-  status.textContent = append ? "Loading more…" : "Searching…";
+  if (blocked || (append && state.loading)) return;
+  inflight?.abort();
+  const ctrl = (inflight = new AbortController());
+  const s = state; // the search this request belongs to
+  s.loading = true;
+  s.done = false;
+  lastAction = { append };
+  hideAlert();
+  setStatus(append ? "Loading more…" : "Searching…");
   if (!append) results.replaceChildren();
+  results.setAttribute("aria-busy", "true");
+  syncControls();
+  const started = performance.now();
+  const page = s.page + 1;
 
   try {
-    const data = await fetchPage(state.query, append ? state.cursor : null);
-    const seen = new Set(state.videos.map((v) => v.id));
-    const fresh = data.items.filter((v) => !seen.has(v.id)).map(enrich);
-    state.videos.push(...fresh);
-    state.cursor = fresh.length ? data.cursor : null;
-    state.loading = false;
-    render();
+    const data = await fetchPage(s.query, append ? s.cursor : null, ctrl.signal);
+    if (s !== state) return; // a newer search replaced this one
+    const seen = new Set(s.videos.map((v) => v.id));
+    const fresh = data.items.filter((v) => v && !seen.has(v.id)).map((v) => enrich(v));
+    s.videos.push(...fresh);
+    s.cursor = fresh.length ? data.cursor ?? null : null;
+    s.page = page;
+    s.loading = false;
+    s.done = s.cursor == null && s.videos.length > 0;
+    syncControls();
+    const list = render(append ? `${fresh.length} more videos loaded. ` : "");
+    track("results_shown", {
+      platform: s.query.platform, range: s.query.range, page, count: fresh.length,
+      total: s.videos.length, latency_ms: Math.round(performance.now() - started),
+    });
+    if (append) focusNew(fresh, list);
   } catch (err) {
-    state.loading = false;
+    if (err.name === "AbortError" || s !== state) return;
+    s.loading = false;
     if (append) render();
-    status.classList.add("error");
-    status.textContent = err.message;
+    else setStatus("");
+    showAlert(err.code || "unknown", err.serverMessage);
+    track("error", { platform: s.query.platform, code: ERROR_COPY[err.code] ? err.code : "unknown", page });
   } finally {
-    goBtn.disabled = moreBtn.disabled = false;
-    moreBtn.hidden = state.cursor == null;
+    if (s === state) {
+      results.removeAttribute("aria-busy");
+      syncControls();
+    }
   }
 }
 
+// After Load more, move focus to the first new card so keyboard users continue
+// where the new results start.
+function focusNew(fresh) {
+  const ids = new Set(fresh.map((v) => v.id));
+  const first = [...results.children].find((n) => ids.has(n.dataset.id));
+  if (first) first.querySelector(".title").focus();
+  else if (!moreBtn.hidden) moreBtn.focus();
+  else if (!endMsg.hidden) endMsg.focus();
+  else results.focus();
+}
+
+function startSearch(query) {
+  if (blocked) return;
+  const same = state.query && ["q", "platform", "range"].every((k) => state.query[k] === query[k]);
+  if (same && state.loading && state.page === 0) return; // ignore duplicate submits
+  const fromShared = sharedPending;
+  sharedPending = false;
+  state = newState(query);
+  cardNodes = new Map();
+  writeUrl();
+  copyBtn.hidden = false;
+  track("search", {
+    platform: query.platform, range: query.range,
+    query_len: queryLengthBucket(query.q), from_shared_link: fromShared,
+  });
+  load({ append: false });
+}
+
+// ---------- URL (shareable links) ----------
+
+function writeUrl() {
+  const base = state.query || sharedQuery;
+  const params = new URLSearchParams(base ? { q: base.q, platform: base.platform, range: base.range } : {});
+  if (sortSel.value !== "score") params.set("sort", sortSel.value);
+  if (minViewsSel.value !== "0") params.set("minViews", minViewsSel.value);
+  const url = new URL(location.href);
+  url.search = params;
+  history.replaceState(null, "", url);
+}
+
+function hasOption(select, value) {
+  return [...select.options].some((o) => o.value === value);
+}
+
+// Fill the form from a shared link (?q=&platform=&range=&sort=&minViews=).
+// It does NOT search: the visitor presses Search, so links can't spend credits.
+function readSharedLink() {
+  const p = new URLSearchParams(location.search);
+  if (hasOption(sortSel, p.get("sort"))) sortSel.value = p.get("sort");
+  if (hasOption(minViewsSel, p.get("minViews"))) minViewsSel.value = p.get("minViews");
+  const q = normalizeQuery(p.get("q"));
+  if (!q || q.length > 200) return null;
+  qInput.value = p.get("q").trim();
+  const radio = form.querySelector(`input[name="platform"][value="${CSS.escape(p.get("platform") || "")}"]`);
+  if (radio) radio.checked = true;
+  if (hasOption(rangeSel, p.get("range"))) rangeSel.value = p.get("range");
+  return { q, platform: form.platform.value, range: rangeSel.value };
+}
+
+// ---------- events ----------
+
 form.addEventListener("submit", (e) => {
   e.preventDefault();
-  const q = $("#q").value.trim();
+  clearTimeout(rerunTimer);
+  const q = normalizeQuery(qInput.value);
   if (!q) return;
-  state = {
-    query: { q, platform: form.platform.value, range: $("#range").value },
-    videos: [],
-    cursor: null,
-    loading: false,
-  };
-  const url = new URL(location.href);
-  url.search = new URLSearchParams(state.query);
-  history.replaceState(null, "", url);
-  load({ append: false });
+  startSearch({ q, platform: form.platform.value, range: rangeSel.value });
 });
 
-moreBtn.addEventListener("click", () => load({ append: true }));
-$("#sort").addEventListener("change", render);
-$("#minViews").addEventListener("change", render);
+// Changing Platform or Posted re-runs the current search (debounced, so
+// arrowing across the platform radios only spends one search).
+form.addEventListener("change", (e) => {
+  if (e.target.name !== "platform" && e.target !== rangeSel) return;
+  clearTimeout(rerunTimer);
+  if (!state.query || blocked) return;
+  rerunTimer = setTimeout(() => {
+    if (normalizeQuery(qInput.value)) form.requestSubmit();
+  }, 400);
+});
 
-// Restore a search from a shared link (?q=...&platform=...&range=...).
-const initial = new URLSearchParams(location.search);
-if (initial.get("q")) {
-  $("#q").value = initial.get("q");
-  const p = form.querySelector(`input[name="platform"][value="${CSS.escape(initial.get("platform") || "")}"]`);
-  if (p) p.checked = true;
-  if (initial.get("range")) $("#range").value = initial.get("range");
-  form.requestSubmit();
+sortSel.addEventListener("change", () => {
+  render();
+  writeUrl();
+});
+minViewsSel.addEventListener("change", () => {
+  render();
+  writeUrl();
+});
+
+moreBtn.addEventListener("click", () => {
+  track("load_more", { platform: state.query.platform, page: state.page + 1, results_so_far: state.videos.length });
+  load({ append: true });
+});
+
+retryBtn.addEventListener("click", () => load(lastAction));
+
+copyBtn.addEventListener("click", async () => {
+  writeUrl();
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(location.href);
+    ok = true;
+  } catch {
+    // Older browsers / insecure contexts: copy through a temporary field.
+    const tmp = document.createElement("textarea");
+    tmp.value = location.href;
+    tmp.setAttribute("readonly", "");
+    tmp.className = "sr-only";
+    document.body.append(tmp);
+    tmp.select();
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    tmp.remove();
+    copyBtn.focus();
+  }
+  copyNote.textContent = ok ? "Link copied" : "Couldn't copy. Copy the address bar instead.";
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => { copyNote.textContent = ""; }, 4000);
+  if (ok) track("copy_link");
+});
+
+helpBtn.addEventListener("click", () => toggle(helpBtn, helpPanel));
+
+results.addEventListener("click", (e) => {
+  const scoreBtn = e.target.closest(".score");
+  if (scoreBtn) toggle(scoreBtn, document.getElementById(scoreBtn.getAttribute("aria-controls")));
+});
+
+// Outbound clicks (left or middle button) on a card link.
+function onVideoOpen(e) {
+  const a = e.target.closest("a");
+  if (!a || (e.type === "auxclick" && e.button !== 1)) return;
+  const card = a.closest(".card");
+  const v = state.videos.find((x) => x.id === card?.dataset.id);
+  if (!v) return;
+  track("video_open", {
+    platform: v.platform, rank: [...results.children].indexOf(card) + 1, score: v.score, sort: sortSel.value,
+  });
+}
+results.addEventListener("click", onVideoOpen);
+results.addEventListener("auxclick", onVideoOpen);
+
+// Escape closes the score explainer or a card's breakdown.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!helpPanel.hidden && (helpPanel.contains(e.target) || e.target === helpBtn)) {
+    toggle(helpBtn, helpPanel, false);
+    helpBtn.focus();
+    return;
+  }
+  const card = e.target.closest?.(".card");
+  const btn = card?.querySelector(".score");
+  if (btn?.getAttribute("aria-expanded") === "true") {
+    toggle(btn, card.querySelector(".breakdown"), false);
+    btn.focus();
+  }
+});
+
+// ---------- start ----------
+
+const sharedQuery = readSharedLink();
+if (sharedQuery) {
+  sharedPending = true;
+  copyBtn.hidden = false;
+  setStatus(`Shared search ready. Press Search to see results for “${sharedQuery.q}”.`);
 }

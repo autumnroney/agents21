@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Product** | Viral Finder: find viral TikTok, YouTube Shorts and YouTube videos by topic |
-| **Status** | Draft v1.0 (MVP built) |
+| **Status** | Draft v1.0 (MVP built; v1.1 built 2026-10-20) |
 | **Date** | 2026-10-20 |
 | **Owner** | Autumn Roney |
 | **Authors** | Five expert agents (definitions in `.claude/agents/`) |
@@ -33,7 +33,26 @@ The agents reviewed the first build. These findings were fixed before this docum
 | Button and score badge contrast ~2.2:1; light-mode error text ~3.1:1 | UX | Darker gradient (≥5.3:1); error text 6.4:1 |
 | Two tab stops per card to the same link | UX | Thumbnail link removed from tab order |
 
-Everything else in sections 1–5 (out-of-credits state, retry button, share links with sort/filters, v1.1 scoring model, analytics, tests) remains open.
+### Shipped in v1.1 (Milestone 2, 2026-10-20)
+
+| Item | Source | What shipped |
+|---|---|---|
+| Daily credit cap | §5.4 | Upstream calls counted per UTC day in Netlify Blobs; above `DAILY_CREDIT_CAP` (default 500) → 503 `daily_limit`. Fails open (logged) if Blobs is unavailable |
+| Kill switch | §5.4 | `SEARCH_DISABLED=true` → 503 `disabled`, no upstream call |
+| Low-credit alert | §1.8 P2, §3.9 | Warning log below `CREDITS_ALERT_THRESHOLD` (default 1000); balance never sent to the browser |
+| Cache key | §3.7, §5.4 | `q` trimmed, whitespace collapsed and lowercased (client and server); `Netlify-Vary: query=q\|platform\|range\|cursor` |
+| Typed errors | §2.7 P0-2, §3.4, §5 | Every error has `code` (`bad_request`, `rate_limited`, `out_of_credits`, `daily_limit`, `disabled`, `upstream_error`, `timeout`, `config`); fixed user messages, upstream text only in server logs; errors are `no-store`; upstream timeout now 8 s; cursor length/charset check |
+| Error and limit states | §2.4, §2.7 P0-2, P0-4 | Error panel (`role="alert"`) with Retry; friendly daily-limit / paused notice that disables Search with an explanation; HTTP 429 from Netlify's rate limiter shown as `rate_limited` |
+| Shared links | §5.1 gap 8, §5.7 | `?q=` fills the form; nothing is searched until the visitor presses Search |
+| Accessibility | §2.6, §2.7 P0-3, P0-5 | Score is a button named "Viral score 72 of 100"; focus kept across re-sort; Load more announces "N more videos loaded" and focuses the first new card |
+| Share and filters | §1.8 P1, §2.7 P1-1, P1-2, P1-6 | `sort` and `minViews` in the URL; Copy link with "Link copied" announcement; Platform/Posted changes re-run the search (debounced); "End of results" |
+| Score explainer | §1.8 P1, §2.7 P1-5 | "i" button with the formula; per-card breakdown (speed points, engagement points, total) |
+| All platforms | §1.8 P1 | `platform=all` queries TikTok, Shorts and YouTube in parallel, merges into one ranked list, pages with one combined cursor; UI says it uses 3 credits |
+| Analytics | §1.8 P0, §4.6 | `POST /api/event` logs allowlisted events (`search`, `results_shown`, `load_more`, `video_open`, `copy_link`, `error`); no cookies, IP, user agent or query text (length bucket only); off under DNT/GPC |
+| Tests | §3.11 | `npm test` (`node --test`, mocked fetch and Blobs): validation, normalization, error codes, cap, kill switch, events, score and formatting helpers |
+| Privacy Notice | §5.5, §5.7 | `public/privacy.html`, linked in the footer (owner must add a contact email) |
+
+Still open: the v1.1 scoring model (§4.4), skeleton loading, empty-state chips, CSP/security headers, origin checks, Terms of Use, and the rest of the v2 roadmap.
 
 ---
 
@@ -139,7 +158,7 @@ Priority: **P0** = MVP cannot ship without it; **P1** = important, shipped; **P2
 | Release | Theme | Scope (priority) |
 |---|---|---|
 | **MVP (current)** | Single-platform viral search | FR-1 to FR-16 above |
-| **v1.1** (+4-6 weeks) | Trust, measurement, cost | P0: privacy-friendly analytics for the KPIs in 1.6. P0: rate limiting or abuse protection on `/api/search`. P0: fix the YouTube "Last 3 months" mapping, which currently maps to `this_year`. P1: "All platforms" mode that merges the three sources into one ranked list. P1: show the score breakdown in a tooltip. P1: persist sort and min-views in the URL. P2: internal monitoring of credits remaining (returned by the function today but never shown or alerted on). |
+| **v1.1** (built 2026-10-20, see "Shipped in v1.1") | Trust, measurement, cost | P0: privacy-friendly analytics for the KPIs in 1.6. P0: rate limiting or abuse protection on `/api/search`. P0: fix the YouTube "Last 3 months" mapping, which currently maps to `this_year`. P1: "All platforms" mode that merges the three sources into one ranked list. P1: show the score breakdown in a tooltip. P1: persist sort and min-views in the URL. P2: internal monitoring of credits remaining (returned by the function today but never shown or alerted on). |
 | **v2** (+1-2 quarters) | Workflow and retention | P0: accounts with saved searches and history. P1: CSV export and copy-to-clipboard. P1: trend alerts (email when a saved keyword gets a video above a score threshold). P1: track a video's views over time to measure real growth speed. P2: more platforms (Instagram Reels) where ScrapeCreators supports them. P2: tune the score per platform. P2: paid tier with quotas if the cost per active user justifies it. |
 
 ### 1.9 Assumptions
@@ -735,19 +754,19 @@ Residual risk: even with every control above, the core data source (scraping) re
 - [ ] **P0** `gitleaks` scan of full history is clean; GitHub secret scanning and push protection are on
 - [ ] **P0** Key exists only in Netlify env (Functions scope); production and dev keys are separate
 - [ ] **P0** Per-IP rate limit is active (verified by load test: request 21 within a minute returns 429)
-- [ ] **P0** Daily credit cap and `SEARCH_DISABLED` kill switch are implemented and tested
+- [x] **P0** Daily credit cap and `SEARCH_DISABLED` kill switch are implemented and tested
 - [ ] **P0** CDN cache headers are verified (a repeat query is served with no upstream call)
 - [ ] **P0** `url`/`thumbnail` scheme and host allowlist is enforced server-side
 - [ ] **P0** `credits` removed from the public response
 - [ ] **P0** Privacy Notice and Terms of Use are published and linked in the footer
-- [ ] **P1** Generic error messages; upstream details only in server logs
-- [ ] **P1** `Object.hasOwn` check for `range`; `cursor` length and charset check
+- [x] **P1** Generic error messages; upstream details only in server logs
+- [x] **P1** `Object.hasOwn` check for `range`; `cursor` length and charset check
 - [ ] **P1** Security headers (CSP, nosniff, frame-ancestors, Referrer-Policy) set in `netlify.toml`
 - [ ] **P1** Spend alerts at 50% and 80% of the cap
 - [ ] **P1** ScrapeCreators, TikTok and YouTube terms reviewed by counsel; decision recorded
 - [ ] **P1** Takedown/DMCA and abuse-report contact published
 - [ ] **P2** Dependabot enabled; lockfile committed when dependencies are added
-- [ ] **P2** Auto-search on shared links requires a click
+- [x] **P2** Auto-search on shared links requires a click
 
 
 ---
