@@ -20,7 +20,7 @@ Status values: `Not started` · `In progress` · `Done`
 
 ## Milestone 2: v1.1, trust, measurement, cost
 
-**Status:** Not started
+**Status:** In progress
 
 Sources: PRD §1.8 (v1.1 row), §2.7 (UX P0 and P1), §5 launch checklist, §3 testing.
 
