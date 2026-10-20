@@ -68,6 +68,8 @@
 
         <div class="copy">
           <button type="button" id="copy" class="secondary" hidden>Copy link</button>
+          <button type="button" id="export-csv" class="secondary" hidden disabled>Export CSV</button>
+          <button type="button" id="copy-results" class="secondary" hidden disabled>Copy results</button>
           <span id="copy-note" class="copy-note" role="status" aria-live="polite"></span>
         </div>
       </div>
@@ -75,8 +77,9 @@
       <p id="platform-hint" class="hint">“All” searches TikTok, YT Shorts and YouTube together and uses 3 credits.</p>
 
       <div id="score-help-panel" class="help" hidden>
-        <p><strong>How the viral score works (0–100).</strong> Mostly speed: views per hour since posting, on a log scale (up to about 70 points for very fast videos). Plus engagement: likes, comments and shares divided by views, up to 30 points at 20% or more. If a platform doesn’t report likes, the video gets a neutral 10 points. If the post date is unknown, the video is treated as 30 days old.</p>
-        <p>Select a card’s score to see its breakdown.</p>
+        <p><strong>How the viral score works (0–100).</strong> Each video is compared with the other results from the same platform in this search, so 50 is a typical result and 100 is the best. Speed counts about 70%: views per hour, adjusted for age so brand-new posts aren’t over-rewarded and long-running hits aren’t under-rewarded. Engagement counts about 30%: likes, comments (×2) and shares (×3) per view, pulled toward the platform’s typical rate when a video has few views.</p>
+        <p>If a platform doesn’t report likes, the score uses speed only. If the post date is unknown, speed counts as average. With fewer than 20 results from a platform, a fixed scale is used instead. Confidence is low when data is missing or a video has under 1,000 views.</p>
+        <p>Select a card’s score to see its breakdown. Scores can shift as you load more results. Export CSV and Copy results are free: they use the results already on the page.</p>
       </div>
     </form>
 

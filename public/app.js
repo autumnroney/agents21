@@ -1,6 +1,8 @@
 import {
-  ago, compact, duration, enrich, errorCode, normalizeQuery, percent, queryLengthBucket, scoreParts,
+  MIN_REFERENCE, ago, ageBucket, compact, duration, enrich, errorCode, normalizeQuery, percent, queryLengthBucket,
+  scoreAll,
 } from "./score.js";
+import { csvFilename, toCsv, toPlainText } from "./export.js";
 
 const $ = (sel) => document.querySelector(sel);
 const form = $("#search");
@@ -15,6 +17,8 @@ const endMsg = $("#end");
 const goBtn = $("#go");
 const copyBtn = $("#copy");
 const copyNote = $("#copy-note");
+const csvBtn = $("#export-csv");
+const copyResultsBtn = $("#copy-results");
 const helpBtn = $("#score-help");
 const helpPanel = $("#score-help-panel");
 const alertBox = $("#alert");
@@ -32,6 +36,7 @@ let cardSeq = 0;
 let rerunTimer;
 let copyTimer;
 let sharedPending = false; // a shared link filled the form but hasn't been searched yet
+let shown = []; // the results currently on screen, in order (what Export/Copy use)
 
 function newState(query) {
   return { query, videos: [], cursor: null, loading: false, page: 0 };
@@ -99,6 +104,8 @@ function render(note = "") {
   results.replaceChildren(...list.map(cardFor));
   if (hadFocus) (active.isConnected ? active : results).focus();
 
+  shown = list;
+  csvBtn.disabled = copyResultsBtn.disabled = list.length === 0;
   if (!state.loading && state.query) setStatus(note + summary(list));
   return list;
 }
@@ -109,6 +116,8 @@ function cardFor(v) {
     node = renderCard(v);
     cardNodes.set(v.id, node);
   }
+  // Scores are relative to the whole result set, so they can change after Load more.
+  if (node.dataset.score !== String(v.score)) updateScore(node, v);
   return node;
 }
 
@@ -130,13 +139,9 @@ function renderCard(v) {
 
   // The score is a button: its name reads "Viral score 72 of 100" and it
   // opens a breakdown of how the number was reached.
-  const scoreBtn = node.querySelector(".score");
-  node.querySelector(".score-num").textContent = v.score;
-  scoreBtn.setAttribute("aria-label", `Viral score ${v.score} of 100`);
   const breakdown = node.querySelector(".breakdown");
   breakdown.id = `breakdown-${++cardSeq}`;
-  scoreBtn.setAttribute("aria-controls", breakdown.id);
-  fillBreakdown(breakdown, v);
+  node.querySelector(".score").setAttribute("aria-controls", breakdown.id);
 
   const title = node.querySelector(".title");
   title.href = v.url;
@@ -152,13 +157,37 @@ function renderCard(v) {
   return node;
 }
 
+function updateScore(node, v) {
+  node.dataset.score = String(v.score);
+  node.querySelector(".score-num").textContent = v.score;
+  node.querySelector(".score").setAttribute("aria-label", `Viral score ${v.score} of 100`);
+  fillBreakdown(node.querySelector(".breakdown"), v);
+}
+
+const BUCKET_LABEL = {
+  day: "posted in the last 24 hours", week: "posted 1–7 days ago", month: "posted 7–30 days ago", older: "posted over 30 days ago",
+};
+
+// Describes the v1.1a score parts (PRD §4.4) computed by scoreAll.
 function fillBreakdown(el, v) {
-  const p = scoreParts(v);
-  const lines = [
-    `Speed: +${p.speed} pts ${p.ageKnown ? `(${compact(v.velocity)} views/hr)` : "(post date unknown, treated as 30 days old)"}`,
-    `Engagement: +${p.eng} pts ${p.engKnown ? `(${percent(v.engagement)})` : "(not reported, neutral 10)"}`,
-    `Viral score: ${p.score} of 100${p.capped ? " (capped at 100)" : ""}`,
-  ];
+  const info = v.scoreInfo;
+  const name = PLATFORM_LABEL[v.platform] || v.platform;
+  const pts = (part) => `+${Math.round(part.points)} pts`;
+  const pct = (part) => Math.round(part.pct * 100);
+  const fixedNote = `fewer than ${MIN_REFERENCE} ${name} results, so a fixed scale`;
+  const { speed, eng } = info;
+  const speedLine = speed.source === "unknown"
+    ? `Speed: ${pts(speed)} (post date unknown, counted as average)`
+    : speed.source === "fixed"
+      ? `Speed: ${pts(speed)} (${compact(v.velocity)} views/hr; ${fixedNote})`
+      : `Speed: ${pts(speed)} (faster than ${pct(speed)}% of ${name} results${speed.source === "bucket" ? ` ${BUCKET_LABEL[ageBucket(v.ageHours)]}` : ""}, age-adjusted)`;
+  const engLine = !eng
+    ? "Engagement: not reported, so the score uses speed only"
+    : eng.source === "fixed"
+      ? `Engagement: ${pts(eng)} (${percent(v.smoothEngagement)} weighted; ${fixedNote})`
+      : `Engagement: ${pts(eng)} (higher than ${pct(eng)}% of ${name} results)`;
+  const level = info.confidence[0].toUpperCase() + info.confidence.slice(1);
+  const lines = [speedLine, engLine, `Viral score: ${info.score} of 100 · ${level} confidence`];
   const ul = document.createElement("ul");
   for (const line of lines) {
     const li = document.createElement("li");
@@ -248,7 +277,11 @@ async function load({ append }) {
   lastAction = { append };
   hideAlert();
   setStatus(append ? "Loading more…" : "Searching…");
-  if (!append) results.replaceChildren();
+  if (!append) {
+    results.replaceChildren();
+    shown = [];
+    csvBtn.disabled = copyResultsBtn.disabled = true;
+  }
   results.setAttribute("aria-busy", "true");
   syncControls();
   const started = performance.now();
@@ -260,6 +293,7 @@ async function load({ append }) {
     const seen = new Set(s.videos.map((v) => v.id));
     const fresh = data.items.filter((v) => v && !seen.has(v.id)).map((v) => enrich(v));
     s.videos.push(...fresh);
+    scoreAll(s.videos); // percentiles use every result loaded so far
     s.cursor = fresh.length ? data.cursor ?? null : null;
     s.page = page;
     s.loading = false;
@@ -306,7 +340,7 @@ function startSearch(query) {
   state = newState(query);
   cardNodes = new Map();
   writeUrl();
-  copyBtn.hidden = false;
+  showShareButtons();
   track("search", {
     platform: query.platform, range: query.range,
     query_len: queryLengthBucket(query.q), from_shared_link: fromShared,
@@ -382,28 +416,65 @@ moreBtn.addEventListener("click", () => {
 
 retryBtn.addEventListener("click", () => load(lastAction));
 
-copyBtn.addEventListener("click", async () => {
-  writeUrl();
-  let ok = false;
+function showShareButtons() {
+  copyBtn.hidden = csvBtn.hidden = copyResultsBtn.hidden = false;
+}
+
+async function copyText(text, btn) {
   try {
-    await navigator.clipboard.writeText(location.href);
-    ok = true;
+    await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     // Older browsers / insecure contexts: copy through a temporary field.
     const tmp = document.createElement("textarea");
-    tmp.value = location.href;
+    tmp.value = text;
     tmp.setAttribute("readonly", "");
     tmp.className = "sr-only";
     document.body.append(tmp);
     tmp.select();
+    let ok;
     try { ok = document.execCommand("copy"); } catch { ok = false; }
     tmp.remove();
-    copyBtn.focus();
+    btn.focus();
+    return ok;
   }
-  copyNote.textContent = ok ? "Link copied" : "Couldn't copy. Copy the address bar instead.";
+}
+
+// Short confirmation in the copy note (a polite live region).
+function note(text) {
+  copyNote.textContent = text;
   clearTimeout(copyTimer);
   copyTimer = setTimeout(() => { copyNote.textContent = ""; }, 4000);
+}
+
+copyBtn.addEventListener("click", async () => {
+  writeUrl();
+  const ok = await copyText(location.href, copyBtn);
+  note(ok ? "Link copied" : "Couldn't copy. Copy the address bar instead.");
   if (ok) track("copy_link");
+});
+
+// Export and Copy results use what is on screen (after sort and min views).
+// Client-side only: no request, no credits.
+csvBtn.addEventListener("click", () => {
+  if (!shown.length) return;
+  const url = URL.createObjectURL(new Blob([toCsv(shown)], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = csvFilename(state.query?.q);
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  note(`CSV downloaded (${shown.length} videos)`);
+  track("export_csv", { count: shown.length });
+});
+
+copyResultsBtn.addEventListener("click", async () => {
+  if (!shown.length) return;
+  const ok = await copyText(toPlainText(shown, state.query.q), copyResultsBtn);
+  note(ok ? `Copied ${shown.length} results` : "Couldn't copy the results.");
+  if (ok) track("copy_results", { count: shown.length });
 });
 
 helpBtn.addEventListener("click", () => toggle(helpBtn, helpPanel));
@@ -422,6 +493,7 @@ function onVideoOpen(e) {
   if (!v) return;
   track("video_open", {
     platform: v.platform, rank: [...results.children].indexOf(card) + 1, score: v.score, sort: sortSel.value,
+    score_version: v.scoreInfo?.version, confidence: v.scoreInfo?.confidence,
   });
 }
 results.addEventListener("click", onVideoOpen);
@@ -448,6 +520,6 @@ document.addEventListener("keydown", (e) => {
 const sharedQuery = readSharedLink();
 if (sharedQuery) {
   sharedPending = true;
-  copyBtn.hidden = false;
+  showShareButtons();
   setStatus(`Shared search ready. Press Search to see results for “${sharedQuery.q}”.`);
 }

@@ -54,9 +54,19 @@ test("rejects unknown events, bad JSON, big bodies and GET", async () => {
 });
 
 test("accepts every event the UI sends", () => {
-  for (const name of ["search", "results_shown", "load_more", "video_open", "copy_link", "error"]) {
+  for (const name of ["search", "results_shown", "load_more", "video_open", "copy_link", "export_csv", "copy_results", "error"]) {
     assert.equal(sanitizeEvent({ name, props: {} }).name, name);
   }
   assert.deepEqual(sanitizeEvent({ name: "error", props: { code: "daily_limit", platform: "all", page: 1 } }),
     { name: "error", code: "daily_limit", platform: "all", page: 1 });
+});
+
+test("video_open keeps the score version and confidence; exports keep only a count", () => {
+  assert.deepEqual(
+    sanitizeEvent({ name: "video_open", props: { platform: "tiktok", score: 80, score_version: "1.1a", confidence: "medium" } }),
+    { name: "video_open", platform: "tiktok", score: 80, score_version: "1.1a", confidence: "medium" },
+  );
+  assert.deepEqual(sanitizeEvent({ name: "video_open", props: { score_version: "9", confidence: "sure" } }), { name: "video_open" });
+  assert.deepEqual(sanitizeEvent({ name: "export_csv", props: { count: 12, q: "secret" } }), { name: "export_csv", count: 12 });
+  assert.deepEqual(sanitizeEvent({ name: "copy_results", props: { count: -1 } }), { name: "copy_results" });
 });

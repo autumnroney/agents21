@@ -18,8 +18,13 @@ export const EVENTS = {
   search: { platform: PLATFORM, range: RANGE, query_len: QUERY_LEN, from_shared_link: "bool" },
   results_shown: { platform: PLATFORM, range: RANGE, page: "int", count: "int", total: "int", latency_ms: "int" },
   load_more: { platform: PLATFORM, page: "int", results_so_far: "int" },
-  video_open: { platform: VIDEO_PLATFORM, rank: "int", score: "int", sort: SORT },
+  video_open: {
+    platform: VIDEO_PLATFORM, rank: "int", score: "int", sort: SORT,
+    score_version: ["1", "1.1a"], confidence: ["low", "medium", "high"],
+  },
   copy_link: {},
+  export_csv: { count: "int" },
+  copy_results: { count: "int" },
   error: { platform: PLATFORM, code: CODES, page: "int" },
 };
 

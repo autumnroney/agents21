@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Product** | Viral Finder: find viral TikTok, YouTube Shorts and YouTube videos by topic |
-| **Status** | Draft v1.0 (MVP built; v1.1 built 2026-10-20) |
+| **Status** | Draft v1.0 (MVP built; v1.1 built 2026-10-20; v2 part 1 built 2026-10-20) |
 | **Date** | 2026-10-20 |
 | **Owner** | Autumn Roney |
 | **Authors** | Five expert agents (definitions in `.claude/agents/`) |
@@ -52,7 +52,18 @@ The agents reviewed the first build. These findings were fixed before this docum
 | Tests | §3.11 | `npm test` (`node --test`, mocked fetch and Blobs): validation, normalization, error codes, cap, kill switch, events, score and formatting helpers |
 | Privacy Notice | §5.5, §5.7 | `public/privacy.html`, linked in the footer (owner must add a contact email) |
 
-Still open: the v1.1 scoring model (§4.4), skeleton loading, empty-state chips, CSP/security headers, origin checks, Terms of Use, and the rest of the v2 roadmap.
+### Shipped in v2 part 1 (Milestone 3a, 2026-10-20)
+
+| Item | Source | What shipped |
+|---|---|---|
+| Export CSV | §1.8 v2 P1, §5 | "Export CSV" downloads the results on screen (after sort and min views) with columns `platform, title, author, handle, url, views, likes, comments, shares, views_per_hour, engagement_rate, viral_score, published_at, duration_sec`. RFC 4180 quoting (commas, quotes, line breaks), CRLF, UTF-8 BOM. Text cells starting with `=`, `+`, `-`, `@`, tab or CR (also after leading spaces) get a leading `'` so spreadsheets don't run them as formulas. Only `http(s)` URLs are exported |
+| Copy results | §1.8 v2 P1 | "Copy results" copies the shown results as plain text (rank, title, URL, platform, handle, views, views/hr, engagement, score, age); "Copied N results" is announced in the live region |
+| No credits | Milestone 3a | Both run in the browser only (no request) and are disabled when no results are shown. Analytics events `export_csv` / `copy_results` carry only a count |
+| Viral score v1.1a | §4.3, §4.4 | Age-adjusted velocity, shrunk engagement, per-platform (and age-bucket) percentiles against the current result set, weighted renormalized combination and a confidence level; fixed-scale fallback below 20 results. See the implementation notes in §4.4 |
+| Score explainer | §2.7 P1-5 | The "i" panel and the per-card breakdown describe the v1.1a model (percentile or fixed scale per part, missing parts, confidence) |
+| Tests | §3.11, §4.3 | `tests/viral-score.test.mjs` reproduces the §4.3 worked examples with the v1 formula and checks each finding against v1.1a; `tests/export.test.mjs` covers CSV columns, escaping, formula neutralization and the plain-text copy |
+
+Still open: server-maintained score quantiles (§4.4 v1.1b), the "Deep score" outlier component (§4.4 step 5), score validation against real growth (§4.5), skeleton loading, empty-state chips, CSP/security headers, origin checks, Terms of Use, and the rest of the v2 roadmap (Milestone 3b).
 
 ---
 
@@ -96,7 +107,7 @@ Viral Finder replaces 15-30 minutes of manual scrolling with one search that sor
 | US-7 | As a manager, I share a link that reproduces my search. | Built (`?q=&platform=&range=` restored on load) |
 | US-8 | As a user, I open the original video in a new tab. | Built |
 | US-9 | As a creator, I compare results across all platforms in one list. | Not built (v1.1) |
-| US-10 | As a manager, I save searches and export results to CSV. | Not built (v2) |
+| US-10 | As a manager, I save searches and export results to CSV. | CSV export built (v2 part 1); saved searches not built (v2 part 2) |
 
 ### 1.5 Goals and non-goals
 
@@ -159,7 +170,7 @@ Priority: **P0** = MVP cannot ship without it; **P1** = important, shipped; **P2
 |---|---|---|
 | **MVP (current)** | Single-platform viral search | FR-1 to FR-16 above |
 | **v1.1** (built 2026-10-20, see "Shipped in v1.1") | Trust, measurement, cost | P0: privacy-friendly analytics for the KPIs in 1.6. P0: rate limiting or abuse protection on `/api/search`. P0: fix the YouTube "Last 3 months" mapping, which currently maps to `this_year`. P1: "All platforms" mode that merges the three sources into one ranked list. P1: show the score breakdown in a tooltip. P1: persist sort and min-views in the URL. P2: internal monitoring of credits remaining (returned by the function today but never shown or alerted on). |
-| **v2** (+1-2 quarters) | Workflow and retention | P0: accounts with saved searches and history. P1: CSV export and copy-to-clipboard. P1: trend alerts (email when a saved keyword gets a video above a score threshold). P1: track a video's views over time to measure real growth speed. P2: more platforms (Instagram Reels) where ScrapeCreators supports them. P2: tune the score per platform. P2: paid tier with quotas if the cost per active user justifies it. |
+| **v2** (+1-2 quarters; part 1 built 2026-10-20, see "Shipped in v2 part 1") | Workflow and retention | P0: accounts with saved searches and history. P1: CSV export and copy-to-clipboard. P1: trend alerts (email when a saved keyword gets a video above a score threshold). P1: track a video's views over time to measure real growth speed. P2: more platforms (Instagram Reels) where ScrapeCreators supports them. P2: tune the score per platform. P2: paid tier with quotas if the cost per active user justifies it. |
 
 ### 1.9 Assumptions
 
@@ -539,7 +550,7 @@ There are no tests today.
 
 All counts are point-in-time snapshots taken at search time. TikTok counts are exact. YouTube counts may be rounded.
 
-### 4.2 Metric definitions (v1, current code in `public/app.js`)
+### 4.2 Metric definitions (v1, the MVP formula; replaced by v1.1a in `public/score.js`, kept as `scoreV1` for tests)
 
 **Age (hours).** `h = max((now − publishedAt) / 3.6e6 ms, 1)`. Edge cases:
 - If the date is missing or can't be parsed, `h = null`. That covers a relative string like "2 days ago", which is possible with YouTube's `publishedTime`. **Action:** confirm that the YouTube format is ISO. If it isn't, parse it on the server.
@@ -632,6 +643,15 @@ When post history isn't available, fall back to $\text{views}/\text{followers}$.
 \*This assumes roughly 1 credit per request. Verify against current ScrapeCreators pricing before building.
 
 Enriching a full page multiplies its cost about 15–25×. **Recommendation:** make "Deep score" opt-in, apply it to the top 10 only, and cache creator profiles server-side for 24 h, keyed by platform and handle. Track `credits_used` per search (§4.6) to manage the budget.
+
+**Implementation notes (v1.1a, built 2026-10-20 in `public/score.js`).** No extra API calls, so the outlier component is never available and the best confidence is *Medium*.
+- Steps 1-4 as written: $h_0 = 2$, $\beta = 0.6$, $k = 5{,}000$, $\mu$ = 0.10 TikTok and 0.03 YouTube **and Shorts**, weights 0.6 / 0.25 / 0.15. Age is unclamped (no 1-hour floor).
+- **Reference set.** Percentiles are computed per platform, so "All platforms" results are never ranked against another platform. A part uses its age bucket when that bucket has ≥ 20 values for the platform, otherwise the platform's whole result set (V\* is already age-adjusted). Percentile rank = (values below + half the ties) / (n − 1), so the best is 1 and the worst 0. Scores are recomputed after Load more.
+- **Fallback (< 20 values for a part).** A fixed scale with the v1 shape: speed $= \min(14\log_{10}(\text{views/h}+1), 70)/70$ and engagement $= \min(\tilde E, 0.2)/0.2$, combined with the same weights. Shrunk engagement is used here too, so small videos can't max it out.
+- **Unknown post date.** The speed part counts as the median (0.5) instead of being dropped, so a missing date neither adds nor removes points (a date-less video with no likes scores exactly 50), and confidence is *Low*. Dropping it entirely would let engagement alone decide the score.
+- **Missing likes.** The engagement part is dropped and the weights renormalized, so a YouTube result scores its speed percentile. A reported 0% engagement is real data and ranks last on engagement.
+- **Confidence.** *Low* when the date or engagement is missing or views < 1,000; *Medium* when speed and engagement are present; *High* needs the outlier component (not built).
+- Shown on each card's breakdown with the points from each part. `video_open` events carry `score_version` (`1.1a`) and `confidence` for the validation in §4.5.
 
 ### 4.5 Validation and tuning
 

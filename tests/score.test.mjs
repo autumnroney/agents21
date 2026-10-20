@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ago, compact, duration, engagementRate, enrich, errorCode, hoursSince, normalizeQuery, percent,
-  queryLengthBucket, scoreParts, viralScore,
+  queryLengthBucket,
 } from "../public/score.js";
 
 const NOW = Date.parse("2026-10-20T12:00:00Z");
@@ -20,35 +20,6 @@ test("engagementRate", () => {
   assert.equal(engagementRate({ views: 100, likes: 5 }), 0.05);
   assert.equal(engagementRate({ views: 0, likes: 5 }), null);
   assert.equal(engagementRate({ views: 100, likes: null }), null);
-});
-
-test("viral score matches FR-7", () => {
-  // 1000 views/hr, 10% engagement: 14*log10(1001) + 150*0.1 = 42 + 15 = 57
-  assert.equal(viralScore({ velocity: 1000, engagement: 0.1 }), 57);
-  // Engagement capped at 20% => 30 pts.
-  assert.equal(viralScore({ velocity: 0, engagement: 0.9 }), 30);
-  // Unknown engagement adds a neutral 10.
-  assert.equal(viralScore({ velocity: 0, engagement: null }), 10);
-  // Unknown age: views / 720.
-  assert.equal(viralScore({ velocity: null, views: 720 * 99, engagement: null }), 38);
-  // Clamped to 100.
-  assert.equal(viralScore({ velocity: 1e12, engagement: 0.2 }), 100);
-});
-
-test("scoreParts explains the score", () => {
-  const p = scoreParts({ velocity: 1000, engagement: 0.1 });
-  assert.deepEqual(p, { speed: 42, eng: 15, score: 57, ageKnown: true, engKnown: true, capped: false });
-  const q = scoreParts({ velocity: null, views: 1000, engagement: null });
-  assert.equal(q.ageKnown, false);
-  assert.equal(q.engKnown, false);
-  assert.equal(scoreParts({ velocity: 1e12, engagement: 0.2 }).capped, true);
-});
-
-test("enrich adds velocity, engagement and score", () => {
-  const v = enrich({ views: 10000, likes: 900, comments: 50, shares: 50, publishedAt: hoursAgo(10) }, NOW);
-  assert.equal(v.velocity, 1000);
-  assert.equal(v.engagement, 0.1);
-  assert.equal(v.score, 57);
 });
 
 test("formatting helpers", () => {
@@ -80,4 +51,13 @@ test("errorCode prefers the server code and maps Netlify's 429", () => {
   assert.equal(errorCode(429, null), "rate_limited");
   assert.equal(errorCode(504, null), "timeout");
   assert.equal(errorCode(500, null), "unknown");
+});
+
+test("enrich adds velocity, engagement and the v1.1a inputs", () => {
+  const v = enrich({ platform: "tiktok", views: 10000, likes: 900, comments: 50, shares: 50, publishedAt: hoursAgo(10) }, NOW);
+  assert.equal(v.velocity, 1000);
+  assert.equal(v.engagement, 0.1);
+  assert.equal(v.ageHours, 10);
+  assert.ok(Math.abs(v.adjVelocity - 10000 / 12 ** 0.6) < 1e-9);
+  assert.equal(v.smoothEngagement, (900 + 100 + 150 + 500) / 15000);
 });

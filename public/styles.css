@@ -115,7 +115,8 @@ button.secondary { padding: 8px 14px; font-size: 0.9rem; }
 }
 .icon-btn[aria-expanded="true"] { border-color: var(--accent-2); }
 
-.copy { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 38px; }
+button.secondary:disabled { cursor: not-allowed; }
 .copy-note { font-size: 0.85rem; color: var(--good); }
 
 .hint { margin: 10px 0 0; font-size: 0.8rem; color: var(--muted); }
