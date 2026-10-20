@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Viral Finder</title>
+  <meta name="description" content="Find viral TikTok and YouTube videos on any topic, ranked by how fast they're blowing up.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1><span aria-hidden="true">🔥</span> Viral Finder</h1>
+      <p class="tagline">Find what's blowing up on TikTok and YouTube, ranked by how fast it's growing.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <form id="search" class="search" autocomplete="off">
+      <div class="row">
+        <label class="sr-only" for="q">Topic or keyword</label>
+        <input id="q" name="q" type="search" placeholder="Try “gym tips”, “AI tools”, “recipes”…" required maxlength="200">
+        <button type="submit" id="go">Search</button>
+      </div>
+
+      <div class="controls">
+        <fieldset class="segmented" aria-label="Platform">
+          <legend class="sr-only">Platform</legend>
+          <input type="radio" name="platform" id="p-tiktok" value="tiktok" checked><label for="p-tiktok">TikTok</label>
+          <input type="radio" name="platform" id="p-shorts" value="shorts"><label for="p-shorts">YT Shorts</label>
+          <input type="radio" name="platform" id="p-youtube" value="youtube"><label for="p-youtube">YouTube</label>
+        </fieldset>
+
+        <label class="field">Posted
+          <select id="range" name="range">
+            <option value="day">Last 24 hours</option>
+            <option value="week" selected>This week</option>
+            <option value="month">This month</option>
+            <option value="3months">Last 3 months</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+
+        <label class="field">Sort by
+          <select id="sort">
+            <option value="score" selected>Viral score</option>
+            <option value="velocity">Views per hour</option>
+            <option value="views">Total views</option>
+            <option value="engagement">Engagement rate</option>
+            <option value="newest">Newest</option>
+          </select>
+        </label>
+
+        <label class="field">Min views
+          <select id="minViews">
+            <option value="0" selected>Any</option>
+            <option value="10000">10K+</option>
+            <option value="100000">100K+</option>
+            <option value="1000000">1M+</option>
+            <option value="10000000">10M+</option>
+          </select>
+        </label>
+      </div>
+    </form>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <section id="results" class="grid" aria-label="Results"></section>
+    <div class="more"><button id="more" type="button" hidden>Load more</button></div>
+
+    <template id="card">
+      <article class="card">
+        <a class="thumb" target="_blank" rel="noopener noreferrer">
+          <img loading="lazy" alt="">
+          <span class="platform"></span>
+          <span class="duration"></span>
+          <span class="score" title="Viral score (0–100)"></span>
+        </a>
+        <div class="body">
+          <a class="title" target="_blank" rel="noopener noreferrer"></a>
+          <div class="author"></div>
+          <dl class="stats">
+            <div><dt>Views</dt><dd class="views"></dd></div>
+            <div><dt>Views/hr</dt><dd class="velocity"></dd></div>
+            <div><dt>Engagement</dt><dd class="engagement"></dd></div>
+            <div><dt>Posted</dt><dd class="age"></dd></div>
+          </dl>
+        </div>
+      </article>
+    </template>
+  </main>
+
+  <footer class="wrap foot">
+    Data via <a href="https://scrapecreators.com" target="_blank" rel="noopener noreferrer">ScrapeCreators</a>. Not affiliated with TikTok or YouTube.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
