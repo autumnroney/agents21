@@ -59,15 +59,34 @@ Sources: PRD §1.8 (v1.1 row), §2.7 (UX P0 and P1), §5 launch checklist, §3 t
 
 ---
 
-## Milestone 3: v2, workflow and retention
+## Milestone 3a: v2 part 1, export and better scoring
+
+**Status:** Not started. Approved by the owner; starts after Milestone 2 is Done. No owner decisions needed.
+
+### Export
+- [ ] "Export CSV" button: downloads the currently shown results (after sort and min-views filter) with columns platform, title, author, handle, url, views, likes, comments, shares, views_per_hour, engagement_rate, viral_score, published_at, duration_sec. Escape CSV correctly and neutralize spreadsheet formula injection (cells starting with `=`, `+`, `-`, `@`) (PRD §1.8 P1, §5)
+- [ ] "Copy" action: copies the shown results as plain text (rank, title, URL, key stats), with a "Copied" announcement in the live region (PRD §1.8 P1)
+- [ ] Both are client-side only and spend no credits; both are disabled when there are no results
+
+### Improved viral score (PRD §4.4, v1.1a variant: free, no extra API calls)
+- [ ] Age-adjusted velocity, smoothed engagement and per-platform percentile normalization against the current result set, exactly as specified in PRD §4.4; fall back to the current formula when a platform has fewer than 20 results
+- [ ] Unknown publish date no longer adds points (the 720-hour assumption is removed or made neutral), and very small videos can't outscore big ones on engagement alone (PRD §4.3 findings)
+- [ ] YouTube results without likes aren't penalized relative to TikTok (PRD §4.3)
+- [ ] The score explainer and per-card breakdown from Milestone 2 describe the new model
+- [ ] Unit tests reproduce the PRD §4.3 worked examples and show the new model fixes each listed bias
+
+**Definition of done:** every box above is checked, `npm test` passes, the UI is verified in a headless browser at 1200px and 375px wide with no console errors, a downloaded CSV opens with correct columns and escaping, and the PRD's status notes are updated.
+
+---
+
+## Milestone 3b: v2 part 2, accounts and retention
 
 **Status:** Not started. Needs decisions before work begins (see below).
 
 - [ ] Accounts with saved searches and history (PRD §1.8 P0)
-- [ ] CSV export and copy-to-clipboard of results (P1)
 - [ ] Trend alerts: email when a saved keyword gets a video above a score threshold (P1)
 - [ ] Track a video's views over time to measure real growth speed (P1)
-- [ ] Improved v1.1 scoring model from PRD §4.4 (age-adjusted velocity, smoothed engagement, per-platform percentiles) (P2)
+- [ ] Server-maintained per-platform score quantiles (PRD §4.4 v1.1b) (P2)
 - [ ] More platforms, such as Instagram Reels (P2)
 - [ ] Paid tier with quotas, if the cost per active user justifies it (P2)
 
