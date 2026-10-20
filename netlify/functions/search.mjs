@@ -24,7 +24,7 @@ async function callApi(path, params, key) {
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== "") url.searchParams.set(k, v);
   }
-  const res = await fetch(url, { headers: { "x-api-key": key } });
+  const res = await fetch(url, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(20000) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.success === false) {
     const msg = body.message || body.error || `HTTP ${res.status}`;
@@ -93,7 +93,7 @@ async function searchTikTok(q, range, cursor, key) {
     key,
   );
   const items = (data.search_item_list || []).map(normalizeTikTok).filter(Boolean);
-  return { items, cursor: data.cursor ?? null, credits: data.credits_remaining };
+  return { items, cursor: data.cursor ?? null };
 }
 
 async function searchYouTube(q, range, type, cursor, key) {
@@ -110,23 +110,26 @@ async function searchYouTube(q, range, type, cursor, key) {
   );
   const raw = [...(data.videos || []), ...(data.shorts || [])];
   for (const shelf of data.shelves || []) raw.push(...(shelf.items || []));
-  const items = raw.map(normalizeYouTube).filter(Boolean);
-  return { items, cursor: data.continuationToken ?? null, credits: data.credits_remaining };
+  let items = raw.map(normalizeYouTube).filter(Boolean);
+  // YouTube has no "last 3 months" filter, so we fetch "this year" and trim.
+  if (range === "3months") {
+    const cutoff = Date.now() - 90 * 864e5;
+    items = items.filter((v) => !v.publishedAt || new Date(v.publishedAt).getTime() >= cutoff);
+  }
+  return { items, cursor: data.continuationToken ?? null };
 }
 
 export default async (req) => {
   const key = process.env.SCRAPECREATORS_API_KEY;
   if (!key) {
-    return Response.json(
-      { error: "Server is missing SCRAPECREATORS_API_KEY. Add it in Netlify environment variables." },
-      { status: 500 },
-    );
+    console.error("SCRAPECREATORS_API_KEY is not set (Netlify > Site configuration > Environment variables).");
+    return Response.json({ error: "Search is temporarily unavailable." }, { status: 500 });
   }
 
   const params = new URL(req.url).searchParams;
   const q = (params.get("q") || "").trim();
   const platform = params.get("platform") || "tiktok";
-  const range = params.get("range") in TIKTOK_DATE ? params.get("range") : "week";
+  const range = Object.hasOwn(TIKTOK_DATE, params.get("range")) ? params.get("range") : "week";
   const cursor = params.get("cursor") || undefined;
 
   if (!q) return Response.json({ error: "Enter a search term." }, { status: 400 });
@@ -154,4 +157,8 @@ export default async (req) => {
   }
 };
 
-export const config = { path: "/api/search" };
+export const config = {
+  path: "/api/search",
+  // Every call spends a paid credit, so cap how often one visitor can search.
+  rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip", "domain"] },
+};

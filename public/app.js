@@ -105,7 +105,6 @@ function renderCard(v) {
 
   const thumb = node.querySelector(".thumb");
   thumb.href = v.url;
-  thumb.setAttribute("aria-label", `Open video: ${v.title || "untitled"}`);
   const img = node.querySelector("img");
   if (v.thumbnail) {
     img.src = v.thumbnail;

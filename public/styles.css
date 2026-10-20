@@ -7,6 +7,8 @@
   --border: #2a3040;
   --accent: #ff4d5e;
   --accent-2: #ff9a3c;
+  --grad: linear-gradient(135deg, #d0213a, #b4410a);
+  --error: #ff6b78;
   --good: #34d399;
   --radius: 14px;
   color-scheme: dark;
@@ -20,7 +22,8 @@
     --text: #141821;
     --muted: #5b6475;
     --border: #dde1ea;
-    --good: #059669;
+    --good: #047857;
+    --error: #b91c30;
     color-scheme: light;
   }
 }
@@ -76,7 +79,7 @@ button {
   border-radius: 10px;
   padding: 12px 22px;
   color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  background: var(--grad);
 }
 button:disabled { opacity: 0.6; cursor: progress; }
 
@@ -92,7 +95,7 @@ button:disabled { opacity: 0.6; cursor: progress; }
 .segmented input:focus-visible + label { outline: 3px solid var(--accent-2); }
 
 .status { min-height: 1.5em; margin: 8px 0 14px; color: var(--muted); }
-.status.error { color: var(--accent); }
+.status.error { color: var(--error); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
 
@@ -120,7 +123,7 @@ button:disabled { opacity: 0.6; cursor: progress; }
 }
 .platform { top: 8px; left: 8px; }
 .duration { bottom: 8px; right: 8px; }
-.score { top: 8px; right: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.score { top: 8px; right: 8px; background: var(--grad); }
 
 .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .title {
